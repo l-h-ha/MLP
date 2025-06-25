@@ -11,36 +11,64 @@ TRAIN_FEATURES = MNIST_DATASET_TRAIN[:, 1:]
 TEST_LABELS = MNIST_DATASET_TEST[:, 0]
 TEST_FEATURES = MNIST_DATASET_TEST[:, 1:]
 
-TRAIN_FEATURES = TRAIN_FEATURES.reshape(60000, 28, 28)
-TEST_FEATURES = TEST_FEATURES.reshape(10000, 28, 28)
+TRAIN_FEATURES = (TRAIN_FEATURES.reshape(60000, 784).astype('float32') - (255.0 / 2)) / (255.0 / 2)
+TEST_FEATURES = (TEST_FEATURES.reshape(10000, 784).astype('float32') - (255.0 / 2)) / (255.0 / 2)
 
 ##
 
-BATCH_SIZE = 30.0
+BATCH_SIZE = 100
 
-if not (60000.0 / BATCH_SIZE).is_integer() and not (10000.0 / BATCH_SIZE).is_integer():
-    raise ValueError("Incorrect batch size.")
+PARTITIONED_TRAIN_FEATURES = TRAIN_FEATURES.reshape(60000 // BATCH_SIZE, BATCH_SIZE, 784)
+PARTITIONED_TEST_FEATURES = TEST_FEATURES.reshape(10000 // BATCH_SIZE, BATCH_SIZE, 784)
 
-PARTITIONED_TRAIN_FEATURES = TRAIN_FEATURES.reshape(60000.0 / BATCH_SIZE, BATCH_SIZE, 28, 28)
-PARTITIONED_TEST_FEATURES = TEST_FEATURES.reshape(10000.0 / BATCH_SIZE, BATCH_SIZE, 28, 28)
+PARTITIONED_TRAIN_LABELS = TRAIN_LABELS.reshape(60000 // BATCH_SIZE, BATCH_SIZE, 1)
+PARTITIONED_TEST_LABELS = TEST_LABELS.reshape(10000 // BATCH_SIZE, BATCH_SIZE, 1)
+
+'''
+X = (BATCH_SIZE, 28**2)
+Y = (BATCH_SIZE, 10)
+
+Y_true = (BATCH_SIZE, 10)
+Y_label = (BATCH_SIZE, 1)
+'''
 
 ##
 
 from mlp import model, layer
-model = model(learning_rate=0.1, loss_str="categorial_cross_entropy")
-model.set_layers([
-    layer(784, "leaky_relu", {"a": 0.01}, {"a": 0.01}),
-    layer(10, "sigmoid"),
-    layer(10, "softmax")
+from mlp.activations import leaky_relu, softmax, identity
+from mlp.derivatives import LEAKY_RELU, SOFTMAX, IDENTITY
+from mlp.weight_modifiers import HE_init
+from mlp.losses import mean_squared_error
+from mlp.loss_derivatives import MEAN_SQUARED_ERROR
+
+model = model(learning_rate=0.1)
+model.set_architecture([
+    identity(), IDENTITY(),
+    layer(shape=(BATCH_SIZE, 784)),
+
+    leaky_relu(), LEAKY_RELU(), HE_init(),
+    layer(shape=(BATCH_SIZE, 10)),
+
+    softmax(), SOFTMAX(), HE_init(),
+    layer(shape=(BATCH_SIZE, 10)),
+
+    mean_squared_error(), MEAN_SQUARED_ERROR()
 ])
 
-for i in range(100):
-    feed = TRAIN_FEATURES[i].flatten().reshape(28*28, 1)
-    feed = 2 * (feed - np.min(feed)) / (np.max(feed) - np.min(feed)) - 1
+for i in range(1000):
+    feed = PARTITIONED_TRAIN_FEATURES[0]
     output = model.forward(feed)
 
-    y_true = [0] * 10
-    y_true[TRAIN_LABELS[i].astype(int) - 1] = 1
-    y_true = np.array(y_true).reshape(10, 1)
+    
+    ##
+
+    y_true = np.zeros(shape=(BATCH_SIZE, 10))
+    y_label = PARTITIONED_TRAIN_LABELS[0].flatten().astype('int')
+    rows = np.arange(BATCH_SIZE)
+    y_true[rows, y_label] = 1 
+
+    ##
+
     loss = model.backward(y_true, output)
-    print("Loss:", loss)
+    #print('Loss:', loss)
+    
